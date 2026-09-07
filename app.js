@@ -252,6 +252,7 @@ async function buildOpenAIBody(conv = conversation) {
     messages: msgs,
   };
   if (config.samplingOn) body.temperature = config.temperature;
+  if (config.thinkingOn) body.enable_thinking = true;
   return body;
 }
 
@@ -409,6 +410,13 @@ function safeMarkdown(md) {
     .replace(/(href|src)\s*=\s*("|')\s*javascript:[^"']*\2/gi, '$1="#"');
 }
 
+/* 思考过程卡片（showThinking 是运行时开关快照，保证历史消息显示稳定） */
+function thinkHtml(m, i) {
+  if (!m.thinking || m.showThinking === false) return '';
+  return `<details class="think"${m._thinkOpen === false ? '' : ' open'} data-mi="${i}">
+      <summary>思考过程</summary><pre>${esc(m.thinking)}</pre></details>`;
+}
+
 const SAMPLES = [
   '总结附件中的关键信息，用表格输出',
   '把附件内容提取为严格的 JSON',
@@ -435,8 +443,7 @@ function renderMessages() {
     </div>`;
     return;
   }
-  box.innerHTML = conversation.map((m, i) => {
-    if (m.role === 'user') {
+  box.innerHTML = conversation.map((m, i) => {    if (m.role === 'user') {
       const files = m.files || [];
       return `<div class="msg msg-user">
         <div class="msg-head">USER <time>${esc(m.time || '')}</time></div>
@@ -446,8 +453,7 @@ function renderMessages() {
         </div>
       </div>`;
     }
-    const think = m.thinking ? `<details class="think"${m._thinkOpen === false ? '' : ' open'} data-mi="${i}">
-      <summary>思考过程</summary><pre>${esc(m.thinking)}</pre></details>` : '';
+    const think = thinkHtml(m, i);
     const body = m.error
       ? `<div class="msg-error">${esc(m.error)}</div>`
       : `<div class="md">${safeMarkdown(m.text)}</div>`;
@@ -468,8 +474,8 @@ function renderMessages() {
       <div class="msg-body">${think}${body}</div>
     </div>`;
   }).join('');
-  const last = box.lastElementChild;
-  if (last && last.scrollIntoView) last.scrollIntoView({ block: 'end' });
+  if (followBottom) box.scrollTop = box.scrollHeight;
+  updateJumpBtn();
 }
 
 function renderComposer() {
@@ -485,10 +491,43 @@ function autoGrow() {
   t.style.height = Math.min(200, t.scrollHeight) + 'px';
 }
 
+/* 滚动跟随：用户上翻查看历史时停止自动贴底，滚回底部附近自动恢复 */
+let followBottom = true;
+function updateJumpBtn() {
+  $('btnJump').hidden = followBottom || !conversation.length;
+}
+
+/* 流式期间只更新最后一条消息的内容——保留滚动位置、折叠状态、内部滚动条 */
+function streamPatch() {
+  const m = conversation[conversation.length - 1];
+  const nodes = document.querySelectorAll('#messages .msg');
+  const node = nodes[nodes.length - 1];
+  if (!m || !node || !node.classList.contains('msg-assistant')) { renderMessages(); return; }
+
+  let think = node.querySelector('.think');
+  if (m.thinking && m.showThinking !== false && !think) {
+    node.querySelector('.msg-body')?.insertAdjacentHTML('afterbegin', thinkHtml(m, conversation.length - 1));
+    think = node.querySelector('.think');
+  }
+  if (think) {
+    const pre = think.querySelector('pre');
+    const stick = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 48;
+    pre.textContent = m.thinking;
+    if (stick) pre.scrollTop = pre.scrollHeight;
+  }
+  const md = node.querySelector('.md');
+  if (md) md.innerHTML = safeMarkdown(m.text || '');
+  if (followBottom) $('messages').scrollTop = $('messages').scrollHeight;
+  updateJumpBtn();
+}
+
 function scheduleRender() {
   if (renderQueued) return;
   renderQueued = true;
-  requestAnimationFrame(() => { renderQueued = false; renderMessages(); });
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    if (streaming) streamPatch(); else renderMessages();
+  });
 }
 
 /* ---------- 发送与流式 ---------- */
@@ -518,7 +557,7 @@ async function run() {
   updateXray();
 
   /* 先构建请求体（此时会话以新 user 消息结尾），再放入流式占位 */
-  const assistant = { role: 'assistant', text: '', thinking: '', files: [] };
+  const assistant = { role: 'assistant', text: '', thinking: '', files: [], showThinking: config.thinkingOn };
   let body;
   try {
     body = await buildBody();
@@ -550,11 +589,13 @@ async function run() {
 
     let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: abortCtl.signal });
 
-    /* 个别兼容端点不认识 stream_options，自动去掉重试一次 */
+    /* 个别兼容端点不认识 stream_options / enable_thinking，自动去掉重试一次 */
     if (!res.ok && !isA && res.status === 400) {
       const errText = await res.text();
-      if (/stream_options/i.test(errText)) {
-        delete body.stream_options;
+      let retried = false;
+      if (/stream_options/i.test(errText)) { delete body.stream_options; retried = true; }
+      if (/enable_thinking/i.test(errText)) { delete body.enable_thinking; retried = true; }
+      if (retried) {
         res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: abortCtl.signal });
       } else {
         throw httpError(res.status, errText);
@@ -748,9 +789,12 @@ function syncConfigUI() {
   $('temperature').value = config.temperature;
   $('tempVal').textContent = Number(config.temperature).toFixed(1);
   const isA = config.provider === 'anthropic';
-  $('thinkingRow').style.display = isA ? '' : 'none';
-  $('thinkingHint').style.display = isA ? '' : 'none';
-  $('thinkingOn').checked = isA && config.thinkingOn;
+  $('thinkingRow').style.display = '';
+  $('thinkingHint').style.display = '';
+  $('thinkingHint').textContent = isA
+    ? 'adaptive thinking · 摘要形式返回'
+    : '推理模型（DeepSeek-R1 / Qwen3 等）思考流 · 勾选后请求附加 enable_thinking';
+  $('thinkingOn').checked = config.thinkingOn;
   $('modelList').innerHTML = MODELS[config.provider].map((m) => `<option value="${m}">`).join('');
   $('urlHint').textContent = URL_HINTS[config.provider];
 }
@@ -873,7 +917,38 @@ function bindMisc() {
   });
 
   $('btnConfigToggle').addEventListener('click', () => $('panelConfig').classList.toggle('open'));
-  $('btnXrayToggle').addEventListener('click', () => $('panelXray').classList.toggle('open'));
+  $('btnXrayToggle').addEventListener('click', () => {
+    if (window.matchMedia('(max-width: 1180px)').matches) {
+      $('panelXray').classList.toggle('open');
+    } else {
+      document.querySelector('.bench').classList.toggle('no-xray');
+    }
+  });
+
+  /* 滚动跟随 + 回到最新 */
+  const msgBox = $('messages');
+  const distFromBottom = () => msgBox.scrollHeight - msgBox.scrollTop - msgBox.clientHeight;
+  msgBox.addEventListener('scroll', () => {
+    const d = distFromBottom();
+    if (d <= 50) followBottom = true;
+    else if (d > 90) followBottom = false;
+    updateJumpBtn();
+  }, { passive: true });
+  /* 输入意图兜底：scroll 事件在隐藏/后台渲染时可能不触发，wheel/touch 更可靠 */
+  msgBox.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0) followBottom = false;
+    else if (distFromBottom() <= 140) followBottom = true;
+    updateJumpBtn();
+  }, { passive: true });
+  msgBox.addEventListener('touchmove', () => {
+    if (distFromBottom() > 140) followBottom = false;
+    updateJumpBtn();
+  }, { passive: true });
+  $('btnJump').addEventListener('click', () => {
+    followBottom = true;
+    msgBox.scrollTop = msgBox.scrollHeight;
+    updateJumpBtn();
+  });
 
   /* 点击移动端抽屉外侧关闭 */
   document.addEventListener('click', (e) => {
