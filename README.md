@@ -1,5 +1,7 @@
 # PromptBench · 提示词调试台
 
+**在线版（永久链接）：https://hwhovo77.github.io/prompt-bench/**
+
 纯静态单页应用，用于调试 LLM 提示词：配置 API 密钥、附加文件（图片 / PDF / Word / Excel）、流式运行，并实时查看实际发出的请求 JSON。
 
 无构建步骤、无后端 —— 所有数据（密钥、会话）只存在本机浏览器的 localStorage 里。
