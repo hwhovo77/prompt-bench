@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PromptBench · 提示词调试台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FFF6F9'/%3E%3Crect x='6' y='6' width='20' height='10' rx='5' fill='%23F49FB6'/%3E%3Crect x='7.4' y='14.4' width='17.2' height='3.2' rx='1.6' fill='%23F6DEC8'/%3E%3Crect x='6' y='16' width='20' height='10' rx='5' fill='%23E886A3'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <button class="ghost-btn only-mobile" id="btnConfigToggle" title="接口配置" aria-label="打开接口配置">☰</button>
+    <span class="brand-mark" aria-hidden="true">
+      <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+        <rect x="6" y="6" width="20" height="10" rx="5" fill="#F49FB6"/>
+        <rect x="7.4" y="14.4" width="17.2" height="3.2" rx="1.6" fill="#F0D5B8"/>
+        <rect x="6" y="16" width="20" height="10" rx="5" fill="#E886A3"/>
+      </svg>
+    </span>
+    <span class="brand-name">PROMPTBENCH</span>
+    <span class="brand-sub">提示词调试台</span>
+  </div>
+  <div class="scope" id="scope" aria-live="polite">
+    <span class="scope-dot" id="scopeDot"></span>
+    <span id="scopeModel">—</span>
+    <span class="scope-sep">·</span>
+    <span id="scopeEndpoint">—</span>
+  </div>
+  <div class="topbar-actions">
+    <button class="ghost-btn" id="btnXrayToggle">透视</button>
+    <button class="ghost-btn" id="btnClear">清空会话</button>
+  </div>
+</header>
+
+<main class="bench">
+
+  <!-- ══════════ 左栏 · 接口配置 ══════════ -->
+  <aside class="panel panel-config" id="panelConfig" aria-label="接口配置">
+
+    <section class="cfg-group">
+      <h2 class="cfg-title">接口</h2>
+      <div class="seg" id="segProvider" role="tablist">
+        <button data-v="anthropic" class="active" type="button">Anthropic</button>
+        <button data-v="openai" type="button">OpenAI 兼容</button>
+      </div>
+
+      <div class="cfg-field">
+        <label class="cfg-label" for="apiKey">API 密钥
+          <button type="button" class="mini-btn" id="btnEye">显示</button>
+        </label>
+        <input type="password" id="apiKey" autocomplete="off" spellcheck="false" placeholder="sk-…">
+        <p class="cfg-hint">只保存在本机浏览器 localStorage，不会上传到任何服务器</p>
+      </div>
+
+      <div class="cfg-field">
+        <label class="cfg-label" for="baseUrl">接口地址
+          <button type="button" class="mini-btn" id="btnUrlReset">默认</button>
+        </label>
+        <input type="text" id="baseUrl" spellcheck="false" autocomplete="off">
+        <p class="cfg-hint" id="urlHint"></p>
+      </div>
+
+      <div class="cfg-field">
+        <label class="cfg-label" for="model">模型</label>
+        <input type="text" id="model" list="modelList" spellcheck="false" autocomplete="off">
+        <datalist id="modelList"></datalist>
+      </div>
+    </section>
+
+    <section class="cfg-group">
+      <h2 class="cfg-title">参数</h2>
+      <div class="cfg-field">
+        <label class="cfg-label" for="maxTokens">max_tokens</label>
+        <input type="number" id="maxTokens" min="1" step="256">
+      </div>
+      <div class="cfg-check">
+        <input type="checkbox" id="samplingOn">
+        <label for="samplingOn">自定义采样参数</label>
+      </div>
+      <div class="cfg-collapse" id="samplingBox" hidden>
+        <div class="cfg-field">
+          <label class="cfg-label" for="temperature">temperature <output id="tempVal">1.0</output></label>
+          <input type="range" id="temperature" min="0" max="2" step="0.1" value="1">
+        </div>
+        <p class="cfg-warn">注意：Claude 5 系模型已移除采样参数，发送 temperature 会返回 400</p>
+      </div>
+      <div class="cfg-check" id="thinkingRow">
+        <input type="checkbox" id="thinkingOn">
+        <label for="thinkingOn">显示思考过程</label>
+      </div>
+      <p class="cfg-hint" id="thinkingHint">adaptive thinking · 摘要形式返回</p>
+    </section>
+
+    <section class="cfg-group cfg-group-grow">
+      <h2 class="cfg-title">系统提示词</h2>
+      <textarea id="systemPrompt" spellcheck="false" placeholder="定义角色、规则、输出格式…&#10;这里的修改会实时反映到右侧「请求 JSON」"></textarea>
+    </section>
+
+    <div class="cfg-foot">
+      <span class="saved-dot" id="savedDot"></span>
+      <span id="savedText">配置自动保存</span>
+    </div>
+  </aside>
+
+  <!-- ══════════ 中栏 · 会话 ══════════ -->
+  <section class="stage" id="stage" aria-label="会话">
+    <div class="messages" id="messages"></div>
+
+    <div class="composer">
+      <div class="attachments" id="attachments"></div>
+      <div class="composer-row">
+        <button class="icon-btn" id="btnAttach" type="button" title="附加文件（图片 / PDF / docx / xlsx / csv / 文本）" aria-label="附加文件">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2v8m0-8L5 5m3-3 3 3M3 11v2h10v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <textarea id="input" rows="1" placeholder="输入提示词，⌘/Ctrl + ⏎ 运行 — 可直接粘贴截图" spellcheck="false"></textarea>
+        <button class="run-btn" id="btnSend" type="button">运行</button>
+        <button class="run-btn run-stop" id="btnStop" type="button" hidden>停止</button>
+      </div>
+      <div class="composer-meta">
+        <span id="charCount">0 字符</span>
+        <span class="meta-sep">·</span><span>图片 / PDF 原生发送，docx / xlsx 自动提取文本</span>
+      </div>
+    </div>
+
+    <div class="drop-overlay" id="dropOverlay" hidden><span>松开以附加文件</span></div>
+    <input type="file" id="fileInput" multiple hidden
+      accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.md,.json,.xml,.html,.log">
+  </section>
+
+  <!-- ══════════ 右栏 · 透视面板 ══════════ -->
+  <aside class="panel panel-xray" id="panelXray" aria-label="请求透视">
+    <nav class="xray-tabs" role="tablist">
+      <button class="active" data-tab="request" type="button" role="tab">请求 JSON</button>
+      <button data-tab="response" type="button" role="tab">响应</button>
+      <button data-tab="curl" type="button" role="tab">cURL</button>
+    </nav>
+    <div class="xray-body">
+      <pre class="code" id="xrayRequest" data-pane="request"></pre>
+      <pre class="code code-dim" id="xrayResponse" data-pane="response">尚无响应。运行一次后，这里显示用量、耗时与停止原因。</pre>
+      <div class="xray-curl" data-pane="curl" id="xCurlPane" hidden>
+        <button class="mini-btn curl-copy" id="btnCopyCurl" type="button">复制</button>
+        <pre class="code" id="xCurl"></pre>
+      </div>
+    </div>
+    <div class="meter" id="meter">
+      <div class="meter-cell"><span class="meter-k">输入</span><span class="meter-v" id="mIn">—</span></div>
+      <div class="meter-cell"><span class="meter-k">输出</span><span class="meter-v" id="mOut">—</span></div>
+      <div class="meter-cell"><span class="meter-k">首字</span><span class="meter-v" id="mTtft">—</span></div>
+      <div class="meter-cell"><span class="meter-k">总耗时</span><span class="meter-v" id="mTime">—</span></div>
+      <div class="meter-cell"><span class="meter-k">停止</span><span class="meter-v" id="mStop">—</span></div>
+    </div>
+  </aside>
+
+</main>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/mammoth.browser.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
