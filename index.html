@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PromptBench · 提示词调试台</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FFF6F9'/%3E%3Crect x='6' y='6' width='20' height='10' rx='5' fill='%23F49FB6'/%3E%3Crect x='7.4' y='14.4' width='17.2' height='3.2' rx='1.6' fill='%23F6DEC8'/%3E%3Crect x='6' y='16' width='20' height='10' rx='5' fill='%23E886A3'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -74,6 +74,18 @@
       <div class="cfg-field">
         <label class="cfg-label" for="maxTokens">max_tokens</label>
         <input type="number" id="maxTokens" min="1" step="256">
+      </div>
+      <div class="cfg-field">
+        <label class="cfg-label" for="historyRounds">历史消息拼接</label>
+        <select id="historyRounds">
+          <option value="-1">全部历史</option>
+          <option value="10">最近 10 轮</option>
+          <option value="5">最近 5 轮</option>
+          <option value="3">最近 3 轮</option>
+          <option value="2">最近 2 轮</option>
+          <option value="1">仅当前消息</option>
+        </select>
+        <p class="cfg-hint">1 轮 = 一组问答；右侧「请求 JSON」实时反映截断效果</p>
       </div>
       <div class="cfg-check">
         <input type="checkbox" id="samplingOn">
@@ -162,6 +174,6 @@
 <script src="vendor/mammoth.browser.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/pdf.min.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

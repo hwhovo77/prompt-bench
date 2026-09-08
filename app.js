@@ -38,6 +38,7 @@ const DEFAULTS = {
   anthropic: { baseUrl: 'https://api.anthropic.com', apiKey: '', model: 'claude-opus-5' },
   openai: { baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-4o' },
   maxTokens: 4096,
+  historyRounds: -1,
   samplingOn: false,
   temperature: 1.0,
   thinkingOn: false,
@@ -202,12 +203,28 @@ function anthropicUserBlocks(msg) {
 /* 空的 assistant 占位（出错/未开始输出）不进入请求历史 */
 const sendable = (conv) => conv.filter((m) => m.role === 'user' || (m.text || '').trim());
 
+/* 按配置截取历史轮数：-1 全部；N>0 保留最近 N 条 user 消息及其后的回复（含当前消息） */
+function sliceHistory(conv) {
+  const n = parseInt(config.historyRounds, 10);
+  if (isNaN(n) || n < 0) return conv;
+  const limit = Math.max(1, n);
+  let start = 0, rounds = 0;
+  for (let i = conv.length - 1; i >= 0; i--) {
+    if (conv[i].role === 'user') {
+      rounds++;
+      start = i;
+      if (rounds >= limit) break;
+    }
+  }
+  return conv.slice(start);
+}
+
 function buildAnthropicBody(conv = conversation) {
   const body = {
     model: config.anthropic.model.trim() || 'claude-opus-5',
     max_tokens: clampInt(config.maxTokens, 1, 128000, 4096),
     stream: true,
-    messages: sendable(conv).map((m) => m.role === 'assistant'
+    messages: sendable(sliceHistory(conv)).map((m) => m.role === 'assistant'
       ? { role: 'assistant', content: [{ type: 'text', text: m.text || '' }] }
       : { role: 'user', content: anthropicUserBlocks(m) }),
   };
@@ -222,7 +239,7 @@ async function buildOpenAIBody(conv = conversation) {
   const msgs = [];
   const sys = config.systemPrompt.trim();
   if (sys) msgs.push({ role: 'system', content: sys });
-  for (const m of sendable(conv)) {
+  for (const m of sendable(sliceHistory(conv))) {
     if (m.role === 'assistant') { msgs.push({ role: 'assistant', content: m.text || '' }); continue; }
     const files = m.files || [];
     const hasImg = files.some((f) => f.kind === 'image' && f.dataUrl);
@@ -485,10 +502,31 @@ function renderComposer() {
   $('charCount').textContent = `${n.toLocaleString()} 字符${size ? ' · 附件 ' + fmtSize(size) : ''}`;
 }
 
+/* 输入框高度自适应：按字符宽度估算行数（纯计算，不读布局——
+   隐藏/后台渲染状态下 scrollHeight 可能返回缓存的旧布局，导致无法回缩） */
 function autoGrow() {
   const t = $('input');
-  t.style.height = 'auto';
-  t.style.height = Math.min(200, t.scrollHeight) + 'px';
+  const vh = window.innerHeight || 700;
+  const cap = Math.max(160, Math.min(360, Math.round(vh * 0.42)));
+  const cs = getComputedStyle(t);
+  const fontPx = parseFloat(cs.fontSize) || 13.5;
+  const lineH = parseFloat(cs.lineHeight) || Math.round(fontPx * 1.6);
+  const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + 4;
+  /* clientWidth 在隐藏/未布局状态下可能为 0，需回退 */
+  let innerW = t.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0) - 2;
+  if (!(innerW > 0)) innerW = 320;
+  const wCJK = fontPx, wAscii = fontPx * 0.6; /* 近似字宽 */
+  let lines = 0;
+  for (const seg of t.value.split('\n')) {
+    if (!seg) { lines++; continue; }
+    let w = 0, n = 1;
+    for (const ch of seg) {
+      w += ch.charCodeAt(0) > 0x2E80 ? wCJK : wAscii;
+      if (w >= innerW) { n++; w = 0; }
+    }
+    lines += n;
+  }
+  t.style.height = Math.min(Math.max(1, lines) * lineH + pad, cap) + 'px';
 }
 
 /* 滚动跟随：用户上翻查看历史时停止自动贴底，滚回底部附近自动恢复 */
@@ -753,6 +791,11 @@ function bindConfig() {
   });
   $('model').addEventListener('input', (e) => { c().model = e.target.value; persistConfigSoon(); updateScope(); updateXray(); });
   $('maxTokens').addEventListener('input', (e) => { config.maxTokens = e.target.value; persistConfigSoon(); updateXray(); });
+  $('historyRounds').addEventListener('change', (e) => {
+    config.historyRounds = parseInt(e.target.value, 10);
+    persistConfigSoon();
+    updateXray();
+  });
 
   $('samplingOn').addEventListener('change', (e) => {
     config.samplingOn = e.target.checked;
@@ -784,6 +827,7 @@ function syncConfigUI() {
   $('baseUrl').value = c.baseUrl;
   $('model').value = c.model;
   $('maxTokens').value = config.maxTokens;
+  $('historyRounds').value = String(config.historyRounds);
   $('samplingOn').checked = config.samplingOn;
   $('samplingBox').hidden = !config.samplingOn;
   $('temperature').value = config.temperature;
@@ -808,6 +852,7 @@ function bindComposer() {
   });
 
   $('btnAttach').addEventListener('click', () => $('fileInput').click());
+  window.addEventListener('resize', debounce(autoGrow, 150));
   $('fileInput').addEventListener('change', async (e) => {
     await addFiles([...e.target.files]);
     e.target.value = '';

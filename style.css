@@ -150,7 +150,7 @@ body {
 }
 .cfg-collapse { padding-left: 2px; }
 
-input[type="password"], input[type="text"], input[type="number"], textarea {
+input[type="password"], input[type="text"], input[type="number"], select, textarea {
   width: 100%;
   background: var(--panel);
   color: var(--text);
@@ -162,6 +162,7 @@ input[type="password"], input[type="text"], input[type="number"], textarea {
   outline: none;
   transition: border-color .15s, box-shadow .15s;
 }
+select { cursor: pointer; font-family: var(--sans); font-size: 12.5px; }
 input:focus-visible, textarea:focus-visible {
   border-color: var(--rose);
   box-shadow: 0 0 0 3px var(--rose-soft);
@@ -404,7 +405,7 @@ input[type="range"] { width: 100%; accent-color: var(--rose); }
 .attachments:not(:empty) { margin-bottom: 10px; }
 .composer-row { display: flex; align-items: flex-end; gap: 8px; }
 #input {
-  flex: 1; resize: none; min-height: 42px; max-height: 200px;
+  flex: 1; resize: none; min-height: 42px;
   line-height: 1.6; font-size: 13.5px; padding: 10px 13px;
   border-radius: 12px;
 }
